@@ -8,103 +8,110 @@
 
 import SpriteKit
 import GameplayKit
+import AudioToolbox
 
 class GameScene: SKScene {
+    public let persistor: Persistor = Persistor()
     
-    var entities = [GKEntity]()
-    var graphs = [String : GKGraph]()
+    public var gameBoard: GameBoard!
     
-    private var lastUpdateTime : TimeInterval = 0
-    private var label : SKLabelNode?
-    private var spinnyNode : SKShapeNode?
+    public var textNodes: TextNodes!
     
-    override func sceneDidLoad() {
+    private var gameManager: GameManager!
+    
+    private var buttons: Buttons!
 
-        self.lastUpdateTime = 0
+    required init?(coder aDecoder: NSCoder) {
+        super.init(coder: aDecoder)
         
-        // Get label node from scene and store it for use later
-        self.label = self.childNode(withName: "//helloLabel") as? SKLabelNode
-        if let label = self.label {
-            label.alpha = 0.0
-            label.run(SKAction.fadeIn(withDuration: 2.0))
-        }
+        self.gameBoard = GameBoard(scene: self)
+        self.textNodes = TextNodes(scene: self)
+        self.buttons = Buttons(scene: self)
+        self.gameManager = GameManager(scene: self)
+    }
+
+    override func didMove(to view: SKView) {
+        let swipeRight: UISwipeGestureRecognizer = UISwipeGestureRecognizer(target: self, action: #selector(GameScene.handeSwipe))
+        swipeRight.direction = .right
+        view.addGestureRecognizer(swipeRight)
         
-        // Create shape node to use during mouse interaction
-        let w = (self.size.width + self.size.height) * 0.05
-        self.spinnyNode = SKShapeNode.init(rectOf: CGSize.init(width: w, height: w), cornerRadius: w * 0.3)
+        let swipeLeft: UISwipeGestureRecognizer = UISwipeGestureRecognizer(target: self, action: #selector(GameScene.handeSwipe))
+        swipeLeft.direction = .left
+        view.addGestureRecognizer(swipeLeft)
         
-        if let spinnyNode = self.spinnyNode {
-            spinnyNode.lineWidth = 2.5
-            
-            spinnyNode.run(SKAction.repeatForever(SKAction.rotate(byAngle: CGFloat(Double.pi), duration: 1)))
-            spinnyNode.run(SKAction.sequence([SKAction.wait(forDuration: 0.5),
-                                              SKAction.fadeOut(withDuration: 0.5),
-                                              SKAction.removeFromParent()]))
-        }
+        let swipeUp: UISwipeGestureRecognizer = UISwipeGestureRecognizer(target: self, action: #selector(GameScene.handeSwipe))
+        swipeUp.direction = .up
+        view.addGestureRecognizer(swipeUp)
+        
+        let swipeDown: UISwipeGestureRecognizer = UISwipeGestureRecognizer(target: self, action: #selector(GameScene.handeSwipe))
+        swipeDown.direction = .down
+        view.addGestureRecognizer(swipeDown)
     }
     
-    
-    func touchDown(atPoint pos : CGPoint) {
-        if let n = self.spinnyNode?.copy() as! SKShapeNode? {
-            n.position = pos
-            n.strokeColor = SKColor.green
-            self.addChild(n)
-        }
-    }
-    
-    func touchMoved(toPoint pos : CGPoint) {
-        if let n = self.spinnyNode?.copy() as! SKShapeNode? {
-            n.position = pos
-            n.strokeColor = SKColor.blue
-            self.addChild(n)
-        }
-    }
-    
-    func touchUp(atPoint pos : CGPoint) {
-        if let n = self.spinnyNode?.copy() as! SKShapeNode? {
-            n.position = pos
-            n.strokeColor = SKColor.red
-            self.addChild(n)
+    override func update(_ currentTime: TimeInterval) {
+        if gameManager.isGameStarted {
+            gameManager.update(time: currentTime)
         }
     }
     
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if let label = self.label {
-            label.run(SKAction.init(named: "Pulse")!, withKey: "fadeInOut")
+        for touch in touches {
+            let location: CGPoint = touch.location(in: self)
+            let touchedNodes: [SKNode] = self.nodes(at: location)
+            
+            for node: SKNode in touchedNodes {
+                if node.name == "play_button" {
+                    startGame()
+                }
+            }
+        }
+    }
+    
+    public func vibrate() {
+        AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate))
+    }
+    
+    @objc private func handeSwipe(swipe: UISwipeGestureRecognizer) {
+        var direction: String = "left"
+        
+        switch swipe.direction {
+        case UISwipeGestureRecognizer.Direction.right:
+            direction = "right"
+        case UISwipeGestureRecognizer.Direction.up:
+            direction = "down"
+        case UISwipeGestureRecognizer.Direction.down:
+            direction = "up"
+        default:
+            direction = "left"
         }
         
-        for t in touches { self.touchDown(atPoint: t.location(in: self)) }
+        gameManager.updateDirection(direction: direction)
     }
     
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { self.touchMoved(toPoint: t.location(in: self)) }
-    }
-    
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { self.touchUp(atPoint: t.location(in: self)) }
-    }
-    
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { self.touchUp(atPoint: t.location(in: self)) }
-    }
-    
-    
-    override func update(_ currentTime: TimeInterval) {
-        // Called before each frame is rendered
+    public func endGame() -> Void {
+        gameManager = GameManager(scene: self)
+        gameBoard.snakePosition = []
+        gameBoard.foodPosition = []
         
-        // Initialize _lastUpdateTime if it has not already been
-        if (self.lastUpdateTime == 0) {
-            self.lastUpdateTime = currentTime
+        vibrate()
+        
+        if textNodes.bestScore < textNodes.score {
+            persistor.saveScore(score: textNodes.score)
         }
         
-        // Calculate time since last update
-        let dt = currentTime - self.lastUpdateTime
+        gameBoard.hide(callback: {
+            self.buttons.show()
+            self.textNodes.show()
+        })
+    }
+    
+    private func startGame() -> Void {
+        vibrate()
         
-        // Update entities
-        for entity in self.entities {
-            entity.update(deltaTime: dt)
-        }
-        
-        self.lastUpdateTime = currentTime
+        buttons.hide()
+        textNodes.hide(callback: {
+            self.gameBoard.show()
+            self.gameManager.startGame()
+        })
     }
 }
